@@ -1,0 +1,232 @@
+{% extends "base.html" %}
+{% block title %}Analysis &middot; Market Terminal{% endblock %}
+{% block heading %}Risk &amp; return{% endblock %}
+
+{% block context %}
+  {{ years }}Y &middot; {{ a.window.start }} &rarr; {{ a.window.end }} &middot;
+  {{ '{:,}'.format(a.window.trading_days) }} days &middot;
+  BENCHMARK {{ a.benchmark }} &middot;
+  RF {{ a.risk_free_rate_pct }}%
+{% endblock %}
+
+{% block content %}
+
+<!-- Headline numbers belong in stat tiles, not a one-bar chart -->
+<div class="kpi-row">
+  <div class="kpi">
+    <span class="kpi-label">Best annualised</span>
+    <span class="kpi-value pos">{{ a.rows[0].symbol }}</span>
+    <span class="kpi-sub">{{ '{:+.1f}'.format(a.rows[0].cagr) }}% a year</span>
+  </div>
+  <div class="kpi">
+    <span class="kpi-label">Equal-weight basket</span>
+    <span class="kpi-value">{{ '{:+.1f}'.format(a.portfolio.cagr_pct) }}%</span>
+    <span class="kpi-sub">a year, vol {{ '{:.1f}'.format(a.portfolio.volatility_pct) }}%</span>
+  </div>
+  <div class="kpi">
+    <span class="kpi-label">{{ a.benchmark }} benchmark</span>
+    <span class="kpi-value">{{ '{:+.1f}'.format(a.benchmark_stats.cagr_pct) }}%</span>
+    <span class="kpi-sub">a year, vol {{ '{:.1f}'.format(a.benchmark_stats.volatility_pct) }}%</span>
+  </div>
+  <div class="kpi">
+    <span class="kpi-label">Deepest drawdown</span>
+    {% set worst = a.rows|sort(attribute='max_dd')|first %}
+    <span class="kpi-value neg">{{ '{:.1f}'.format(worst.max_dd) }}%</span>
+    <span class="kpi-sub">{{ worst.symbol }}, peak {{ worst.peak_date }}</span>
+  </div>
+</div>
+
+<!-- ── Risk vs return: the chart that actually answers the question ─── -->
+<section class="card">
+  <div class="card-head">
+    <div>
+      <h2>Risk against return</h2>
+      <p class="muted small">
+        Annualised volatility on the horizontal axis, annualised growth on the
+        vertical. Up and to the left is better: more return for less risk.
+        Anything above the dashed line beat the {{ a.benchmark }} benchmark.
+      </p>
+    </div>
+  </div>
+  <div class="chart-box chart-box-tall">
+    <canvas id="scatter-chart" role="img"
+            aria-label="Scatter plot of annualised volatility against annualised return for each company"></canvas>
+  </div>
+</section>
+
+<!-- ── CAGR ranking ──────────────────────────────────────────────── -->
+<section class="card">
+  <div class="card-head">
+    <div>
+      <h2>Annualised return (CAGR)</h2>
+      <p class="muted small">
+        The constant yearly rate that turns the starting price into the ending
+        price. It is the honest way to compare periods, unlike a raw total.
+      </p>
+    </div>
+  </div>
+  <div class="chart-box chart-box-tall">
+    <canvas id="cagr-chart" role="img"
+            aria-label="Bar chart of annualised return by company"></canvas>
+  </div>
+</section>
+
+<!-- ── Growth of 100 ─────────────────────────────────────────────── -->
+<section class="card">
+  <div class="card-head">
+    <div>
+      <h2>Growth of $100</h2>
+      <p class="muted small">
+        An equal-weight basket of all {{ a.rows|length }}, rebalanced daily,
+        against the market. Both start at $100 on the first day.
+      </p>
+    </div>
+  </div>
+  <div class="chart-box">
+    <canvas id="growth-chart" role="img"
+            aria-label="Line chart comparing growth of the equal-weight basket against the benchmark"></canvas>
+  </div>
+  <div id="growth-legend" class="legend"></div>
+</section>
+
+<!-- ── Drawdown ──────────────────────────────────────────────────── -->
+<section class="card">
+  <div class="card-head">
+    <div>
+      <h2>Worst peak-to-trough fall</h2>
+      <p class="muted small">
+        How far each fell from its own running high — the loss an investor
+        would actually have lived through, not the fall from the best price.
+      </p>
+    </div>
+  </div>
+  <div class="chart-box chart-box-tall">
+    <canvas id="dd-chart" role="img"
+            aria-label="Bar chart of maximum drawdown by company"></canvas>
+  </div>
+</section>
+
+<!-- ── Correlation heatmap: sequential single hue ────────────────── -->
+<section class="card">
+  <div class="card-head">
+    <div>
+      <h2>Correlation of daily returns</h2>
+      <p class="muted small">
+        1.00 means they move together every day; 0.00 means no relationship.
+        Darker is more correlated — and less diversifying.
+      </p>
+    </div>
+  </div>
+  <div class="table-scroll">
+    <table class="heat">
+      <thead>
+        <tr>
+          <th></th>
+          {% for s in a.corr.symbols %}<th>{{ s }}</th>{% endfor %}
+        </tr>
+      </thead>
+      <tbody>
+      {% for row in a.corr.matrix %}
+        <tr>
+          <th scope="row">{{ a.corr.symbols[loop.index0] }}</th>
+          {% for v in row %}
+            {% set step = [[(v / 0.7 * 5) | round | int, 0] | max, 5] | min %}
+            <td class="heat-{{ step }}">{{ '{:.2f}'.format(v) }}</td>
+          {% endfor %}
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ── Full metrics table ────────────────────────────────────────── -->
+<section class="card">
+  <div class="card-head">
+    <div>
+      <h2>All metrics</h2>
+      <p class="muted small">
+        Sharpe is return per unit of total risk; beta is sensitivity to the
+        market (1.0 moves with it); alpha is the annualised return left over
+        after accounting for that market exposure.
+      </p>
+    </div>
+  </div>
+  <div class="table-scroll">
+    <table class="data-table">
+      <caption class="sr-only">{{ years }}-year risk and return metrics</caption>
+      <thead>
+        <tr>
+          <th scope="col">Company</th>
+          <th scope="col" class="num">Total</th>
+          <th scope="col" class="num">CAGR</th>
+          <th scope="col" class="num">Vol</th>
+          <th scope="col" class="num">Sharpe</th>
+          <th scope="col" class="num">Sortino</th>
+          <th scope="col" class="num">Max DD</th>
+          <th scope="col" class="num">Beta</th>
+          <th scope="col" class="num">Alpha</th>
+          <th scope="col" class="num">Up days</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for r in a.rows %}
+        <tr>
+          <td>
+            <a class="sym-link" href="{{ url_for('company', symbol=r.symbol) }}">
+              <strong>{{ r.symbol }}</strong>
+              <span class="muted">{{ r.name }}</span>
+            </a>
+          </td>
+          <td class="num {{ 'pos' if r.total >= 0 else 'neg' }}">{{ '{:+.1f}'.format(r.total) }}%</td>
+          <td class="num {{ 'pos' if r.cagr >= 0 else 'neg' }}">{{ '{:+.1f}'.format(r.cagr) }}%</td>
+          <td class="num muted">{{ '{:.1f}'.format(r.vol) }}%</td>
+          <td class="num">{{ '{:.2f}'.format(r.sharpe) }}</td>
+          <td class="num muted">{{ '{:.2f}'.format(r.sortino) }}</td>
+          <td class="num neg">{{ '{:.1f}'.format(r.max_dd) }}%</td>
+          <td class="num">{{ '{:.2f}'.format(r.beta) if r.beta is not none else '—' }}</td>
+          <td class="num {{ 'pos' if (r.alpha or 0) >= 0 else 'neg' }}">
+            {{ '{:+.1f}'.format(r.alpha) ~ '%' if r.alpha is not none else '—' }}
+          </td>
+          <td class="num muted">{{ '{:.1f}'.format(r.up_days) }}%</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+      <tfoot>
+        <tr>
+          <td><strong>Equal-weight {{ a.rows|length }}</strong></td>
+          <td class="num">{{ '{:+.1f}'.format(a.portfolio.total_return_pct) }}%</td>
+          <td class="num">{{ '{:+.1f}'.format(a.portfolio.cagr_pct) }}%</td>
+          <td class="num muted">{{ '{:.1f}'.format(a.portfolio.volatility_pct) }}%</td>
+          <td class="num">{{ '{:.2f}'.format(a.portfolio.sharpe) }}</td>
+          <td class="num muted">{{ '{:.2f}'.format(a.portfolio.sortino) }}</td>
+          <td class="num neg">{{ '{:.1f}'.format(a.portfolio.max_drawdown_pct) }}%</td>
+          <td class="num">{{ '{:.2f}'.format(a.portfolio.beta) }}</td>
+          <td class="num">{{ '{:+.1f}'.format(a.portfolio.alpha_pct) }}%</td>
+          <td class="num muted">{{ '{:.1f}'.format(a.portfolio.positive_days_pct) }}%</td>
+        </tr>
+        <tr>
+          <td><strong>{{ a.benchmark }}</strong> <span class="muted">{{ a.benchmark_stats.name }}</span></td>
+          <td class="num">{{ '{:+.1f}'.format(a.benchmark_stats.total_return_pct) }}%</td>
+          <td class="num">{{ '{:+.1f}'.format(a.benchmark_stats.cagr_pct) }}%</td>
+          <td class="num muted">{{ '{:.1f}'.format(a.benchmark_stats.volatility_pct) }}%</td>
+          <td class="num">{{ '{:.2f}'.format(a.benchmark_stats.sharpe) }}</td>
+          <td class="num muted">{{ '{:.2f}'.format(a.benchmark_stats.sortino) }}</td>
+          <td class="num neg">{{ '{:.1f}'.format(a.benchmark_stats.max_drawdown_pct) }}%</td>
+          <td class="num">1.00</td>
+          <td class="num muted">—</td>
+          <td class="num muted">{{ '{:.1f}'.format(a.benchmark_stats.positive_days_pct) }}%</td>
+        </tr>
+      </tfoot>
+    </table>
+  </div>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script id="analysis-data" type="application/json">{{ a|tojson }}</script>
+{% endblock %}
+
+{% block extra_scripts %}
+<script src="{{ url_for('static', filename='js/analysis.js') }}"></script>
+{% endblock %}

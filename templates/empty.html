@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}No data yet &middot; Market Terminal{% endblock %}
+{% block heading %}No data yet{% endblock %}
+{% block content %}
+<section class="card empty">
+  <h2>The database is empty</h2>
+  <p class="muted">
+    The price data is generated, not committed &mdash; it is rebuilt from
+    Yahoo Finance rather than stored in the repository.
+  </p>
+  <p><code>python ingest.py --years 3</code></p>
+  <p class="muted small">
+    That fetches about three years of daily closes for the tracked companies
+    and takes roughly thirty seconds. Add <code>--offline</code> to generate
+    deterministic sample data instead, with no network access.
+  </p>
+</section>
+{% endblock %}

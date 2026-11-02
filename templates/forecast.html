@@ -1,0 +1,265 @@
+{% extends "base.html" %}
+{% block title %}Forecast &middot; Market Terminal{% endblock %}
+{% block heading %}Forecast{% endblock %}
+
+{% block context %}
+  {% if f %}
+    H+{{ f.horizon }}D &middot; WALK-FORWARD &middot;
+    {{ f.symbols|length }} companies &middot;
+    RUN {{ f.generated_at.replace('T', ' ') }}
+  {% else %}
+    NO SAVED RUN
+  {% endif %}
+{% endblock %}
+
+{% block content %}
+
+<p id="fc-status" class="refresh-status" hidden></p>
+
+{% if not f %}
+  <section class="card empty">
+    <h2>Nothing computed yet</h2>
+    <p class="muted">
+      The backtest refits every model hundreds of times, so it runs offline
+      rather than inside a page load. It takes about two minutes.
+    </p>
+    <p><code>python forecast.py --save</code></p>
+    <button id="fc-run" class="btn" type="button">Run it now</button>
+  </section>
+{% else %}
+
+{% set agg = f.aggregate %}
+{% set beaters = agg.items() | selectattr('0', 'ne', 'naive')
+                             | selectattr('1.skill_vs_naive', 'gt', 0) | list %}
+
+<!-- The headline finding goes first, in words, because it is the point -->
+<section class="card verdict {{ 'verdict-warn' if not beaters else '' }}">
+  <h2>
+    {% if not beaters %}
+      No model beat the naive random walk
+    {% else %}
+      {{ beaters|length }} model(s) edged past the naive walk
+    {% endif %}
+  </h2>
+  <p>
+    Every model here was scored only on data it had never seen, predicting
+    {{ f.horizon }} trading days ahead. The benchmark is
+    <strong>&ldquo;the price does not change&rdquo;</strong>
+    &mdash; and on daily closes that is a genuinely hard benchmark to beat.
+    {% if not beaters %}
+      None of the four alternatives managed it on average, which is the
+      expected and honest result.
+    {% else %}
+      Treat a small positive skill score with suspicion: across ten companies
+      in one period it sits well inside the noise.
+    {% endif %}
+  </p>
+</section>
+
+<!-- ── Skill vs the naive walk ───────────────────────────────────── -->
+<section class="card">
+  <div class="card-head">
+    <div>
+      <h2>Skill against the random walk</h2>
+      <p class="muted small">
+        <code>1 &minus; MSE&nbsp;/&nbsp;MSE&#95;naive</code>. Above zero beats
+        &ldquo;assume no change&rdquo;; below zero is worse than doing nothing.
+      </p>
+    </div>
+  </div>
+  <div class="chart-box">
+    <canvas id="skill-chart" role="img"
+            aria-label="Bar chart of forecasting skill against the naive benchmark"></canvas>
+  </div>
+</section>
+
+<!-- ── Directional accuracy ──────────────────────────────────────── -->
+<section class="card">
+  <div class="card-head">
+    <div>
+      <h2>Directional accuracy</h2>
+      <p class="muted small">
+        How often the predicted up/down move matched reality. The dashed line
+        is 50% &mdash; a coin flip. Being a few points above it is not an edge,
+        and it is not the same as making money.
+      </p>
+    </div>
+  </div>
+  <div class="chart-box">
+    <canvas id="dir-chart" role="img"
+            aria-label="Bar chart of directional accuracy by model against a 50% coin-flip line"></canvas>
+  </div>
+</section>
+
+<!-- ── Model scores ──────────────────────────────────────────────── -->
+<section class="card">
+  <div class="card-head"><h2>Model scores, averaged across companies</h2></div>
+  <div class="table-scroll">
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th scope="col">Model</th>
+          <th scope="col">What it does</th>
+          <th scope="col" class="num">MAPE</th>
+          <th scope="col" class="num">Direction</th>
+          <th scope="col" class="num">Skill vs naive</th>
+          <th scope="col" class="num">Beat naive</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% set blurbs = {
+        'naive': 'Assumes the price does not change — the benchmark',
+        'drift': 'Extends the average historical daily return',
+        'sma20': 'Predicts reversion to the 20-day average',
+        'ridge': 'Linear regression on lagged returns and momentum',
+        'gbt':   'Gradient-boosted trees on the same features'} %}
+      {% for name, s in agg.items() %}
+        <tr>
+          <td><strong>{{ name }}</strong></td>
+          <td class="muted">{{ blurbs.get(name, '') }}</td>
+          <td class="num">{{ '{:.2f}'.format(s.mape) }}%</td>
+          <td class="num">
+            {% if s.direction_pct is not none %}
+              {{ '{:.1f}'.format(s.direction_pct) }}%
+            {% else %}<span class="muted">n/a</span>{% endif %}
+          </td>
+          <td class="num {{ 'pos' if s.skill_vs_naive > 0 else 'neg' if s.skill_vs_naive < 0 else '' }}">
+            {{ '{:+.3f}'.format(s.skill_vs_naive) }}
+          </td>
+          <td class="num muted">{{ s.beat_naive_count }}/{{ s.n }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ── Forward projection ────────────────────────────────────────── -->
+<section class="card">
+  <div class="card-head">
+    <div>
+      <h2>Next {{ f.horizon }} trading days</h2>
+      <p class="muted small">
+        The <strong>range</strong> is the real output here. Given how the
+        backtest went, treat the single point as an illustration, not a
+        prediction &mdash; the width of the band is the honest statement.
+      </p>
+    </div>
+  </div>
+  <div class="chart-box chart-box-tall">
+    <canvas id="band-chart" role="img"
+            aria-label="Projected price ranges for each company over the forecast horizon"></canvas>
+  </div>
+  <div class="table-scroll" style="margin-top:16px">
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th scope="col">Company</th>
+          <th scope="col" class="num">Last close</th>
+          <th scope="col" class="num">Point</th>
+          <th scope="col" class="num">Change</th>
+          <th scope="col" class="num">80% range</th>
+          <th scope="col" class="num">Band width</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for sym, r in f.results.items() %}
+        {% set p = r.projection %}
+        {% if not p.error %}
+        <tr>
+          <td>
+            <a class="sym-link" href="{{ url_for('company', symbol=sym) }}">
+              <strong>{{ sym }}</strong>
+            </a>
+          </td>
+          <td class="num">${{ '{:,.2f}'.format(p.last_close) }}</td>
+          <td class="num">${{ '{:,.2f}'.format(p.point) }}</td>
+          <td class="num {{ 'pos' if p.change_pct >= 0 else 'neg' }}">
+            {{ '{:+.2f}'.format(p.change_pct) }}%
+          </td>
+          <td class="num muted">
+            ${{ '{:,.0f}'.format(p.lo80) }} – ${{ '{:,.0f}'.format(p.hi80) }}
+          </td>
+          <td class="num">{{ '{:.1f}'.format(p.band_width_pct) }}%</td>
+        </tr>
+        {% endif %}
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ── Per company ───────────────────────────────────────────────── -->
+<section class="card">
+  <div class="card-head">
+    <div>
+      <h2>Skill by company</h2>
+      <p class="muted small">
+        Positive means that model beat the random walk for that company.
+        Scattered signs across companies is what noise looks like.
+      </p>
+    </div>
+  </div>
+  <div class="table-scroll">
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th scope="col">Company</th>
+          {% for n in ['drift', 'sma20', 'ridge', 'gbt'] %}
+            <th scope="col" class="num">{{ n }}</th>
+          {% endfor %}
+          <th scope="col" class="num">Windows</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for sym, r in f.results.items() %}
+        <tr>
+          <td><strong>{{ sym }}</strong></td>
+          {% for n in ['drift', 'sma20', 'ridge', 'gbt'] %}
+            {% set v = r.backtest.scores[n].skill_vs_naive %}
+            <td class="num {{ 'pos' if v > 0 else 'neg' }}">{{ '{:+.3f}'.format(v) }}</td>
+          {% endfor %}
+          <td class="num muted">{{ r.backtest.windows }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="card">
+  <div class="card-head"><h2>How this was measured</h2></div>
+  <ul class="prose">
+    <li><strong>Walk-forward.</strong> At each step the models saw only prices
+      up to that day, predicted {{ f.horizon }} days ahead, and were scored
+      against what actually happened. Nothing is scored on data it was fitted to.</li>
+    <li><strong>No lookahead.</strong> Training rows are restricted to those
+      whose outcome had already occurred by the prediction date. Getting this
+      wrong is the classic way to build a forecaster that looks brilliant in a
+      backtest and useless in reality.</li>
+    <li><strong>The band comes from volatility</strong>, widening with the square
+      root of time &mdash; the standard random-walk assumption. It is not a
+      model output, and it does not narrow because a model feels confident.</li>
+    <li><strong>One period, ten companies.</strong> That is a small sample.
+      Differences of a few hundredths of a skill point mean nothing.</li>
+  </ul>
+  <p class="muted small">
+    Educational coursework. Not investment advice, and not a trading system.
+  </p>
+</section>
+
+<div class="rerun">
+  <button id="fc-run" class="btn" type="button">Recompute the backtest</button>
+  <span class="muted small">Takes about two minutes.</span>
+</div>
+
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+{% if f %}<script id="forecast-data" type="application/json">{{ f|tojson }}</script>{% endif %}
+{% endblock %}
+
+{% block extra_scripts %}
+<script src="{{ url_for('static', filename='js/forecast.js') }}"></script>
+{% endblock %}

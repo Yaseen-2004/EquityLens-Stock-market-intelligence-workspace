@@ -1,0 +1,4 @@
+# Optional: local sentence embeddings for the semantic-search knowledge base
+# (insertdata.py / vectorstore.py). Pulls in torch, so it is far too large for
+# a serverless bundle - install it locally only.
+sentence-transformers>=3.0

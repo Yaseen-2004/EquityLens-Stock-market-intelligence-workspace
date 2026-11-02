@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Market Terminal{% endblock %}</title>
+  <script>
+    // Applied before paint to avoid a flash of the wrong theme.
+    try {
+      var t = localStorage.getItem("theme");
+      if (t === "dark" || t === "light")
+        document.documentElement.setAttribute("data-theme", t);
+    } catch (e) {}
+  </script>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+  <!-- Vendored locally so the dashboard works with no internet access. -->
+  <script src="{{ url_for('static', filename='js/vendor/chart.umd.min.js') }}"></script>
+</head>
+<body>
+<div class="app">
+
+  <!-- ── navigation rail ───────────────────────────────────────────── -->
+  <nav class="rail" aria-label="Sections">
+    <a class="rail-brand" href="{{ url_for('index') }}">
+      <span class="brand-mark" aria-hidden="true"></span>
+      Market
+    </a>
+
+    <div class="rail-nav">
+      <span class="rail-label">Markets</span>
+      {% set here = request.endpoint %}
+      <a class="rail-link" href="{{ url_for('index') }}"
+         {% if here == 'index' %}aria-current="page"{% endif %}>Overview</a>
+      <a class="rail-link" href="{{ url_for('analysis_page') }}"
+         {% if here == 'analysis_page' %}aria-current="page"{% endif %}>Analysis</a>
+      <a class="rail-link" href="{{ url_for('forecast_page') }}"
+         {% if here == 'forecast_page' %}aria-current="page"{% endif %}>Forecast</a>
+
+      <span class="rail-label">Companies</span>
+      {% for c in nav_companies or [] %}
+        <a class="rail-link rail-tick" href="{{ url_for('company', symbol=c.symbol) }}"
+           {% if here == 'company' and current_symbol == c.symbol %}aria-current="page"{% endif %}>
+          <span class="tick-sym">{{ c.symbol }}</span>
+          <span class="tick-pct {{ 'pos' if c.ytd >= 0 else 'neg' }}">
+            {{ '{:+.1f}'.format(c.ytd) }}
+          </span>
+        </a>
+      {% endfor %}
+    </div>
+
+    <div class="rail-foot">
+      Adjusted closes from Yahoo Finance.<br>
+      Educational use only — not investment advice.
+    </div>
+  </nav>
+
+  <!-- ── main column ───────────────────────────────────────────────── -->
+  <div class="main">
+    <header class="topbar">
+      <h1>{% block heading %}Market Terminal{% endblock %}</h1>
+      <span class="topbar-meta">{% block context %}{% endblock %}</span>
+      <div class="topbar-actions">
+        {% block actions %}{% endblock %}
+        <button id="theme-toggle" class="btn btn-ghost" type="button"
+                aria-label="Toggle colour theme">Theme</button>
+      </div>
+    </header>
+
+    <main class="wrap">
+      {% block content %}{% endblock %}
+    </main>
+  </div>
+</div>
+
+<!-- ── AI assistant ────────────────────────────────────────────────── -->
+<button id="chat-open" class="chat-fab" type="button"
+        aria-label="Open the AI assistant" aria-expanded="false">
+  <span class="chat-fab-dot" aria-hidden="true"></span>
+  Ask
+</button>
+
+<aside id="chat-panel" class="chat-panel" hidden
+       role="dialog" aria-label="AI assistant" aria-modal="false">
+  <header class="chat-head">
+    <div>
+      <strong>Assistant</strong>
+      <span id="chat-status" class="chat-status">checking…</span>
+    </div>
+    <div class="chat-head-actions">
+      <button id="chat-clear" class="chat-icon" type="button"
+              title="Clear the conversation">Clear</button>
+      <button id="chat-close" class="chat-icon" type="button"
+              aria-label="Close the assistant">&times;</button>
+    </div>
+  </header>
+
+  <div id="chat-log" class="chat-log" aria-live="polite" aria-atomic="false">
+    <div class="chat-intro">
+      <p>I read this project's database to answer questions. Try:</p>
+      <div class="chat-suggestions">
+        <button class="chat-chip" type="button">Which company has grown most this year?</button>
+        <button class="chat-chip" type="button">Compare NVDA and TSLA on risk</button>
+        <button class="chat-chip" type="button">What happened in April 2025?</button>
+        <button class="chat-chip" type="button">Which two move together the least?</button>
+      </div>
+    </div>
+  </div>
+
+  <form id="chat-form" class="chat-form" autocomplete="off">
+    <label class="sr-only" for="chat-input">Ask a question</label>
+    <textarea id="chat-input" class="chat-input" rows="1"
+              placeholder="Ask about the data…" maxlength="4000"></textarea>
+    <button id="chat-send" class="chat-send" type="submit"
+            aria-label="Send">Send</button>
+  </form>
+  <p class="chat-foot">
+    Answers come from the database, not from memory. Educational use only.
+  </p>
+</aside>
+
+<!-- Page data first: dashboard.js reads these <script type=application/json>
+     blocks as soon as it runs, so they must already be in the DOM. -->
+{% block scripts %}{% endblock %}
+<script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
+{% block extra_scripts %}{% endblock %}
+<script src="{{ url_for('static', filename='js/assistant.js') }}"></script>
+</body>
+</html>

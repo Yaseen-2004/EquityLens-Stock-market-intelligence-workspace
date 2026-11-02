@@ -1,0 +1,180 @@
+{% extends "base.html" %}
+{% block title %}Overview &middot; Market Terminal{% endblock %}
+{% block heading %}Overview{% endblock %}
+
+{% block context %}
+  {{ rank_modes[mode]|upper }} &middot;
+  {{ coverage.first_date.strftime('%d %b %Y') }} &rarr;
+  {{ coverage.last_date.strftime('%d %b %Y') }} &middot;
+  {{ '{:,}'.format(coverage.bars) }} bars &middot;
+  {{ coverage.companies }} companies
+{% endblock %}
+
+{% block actions %}
+  <button id="refresh-btn" class="btn btn-ghost" type="button">Refresh</button>
+{% endblock %}
+
+{% block content %}
+
+<!-- Headline numbers as a stat strip, not a chart -->
+<div class="kpi-row">
+  <div class="kpi">
+    <span class="kpi-label">Largest</span>
+    <span class="kpi-value">{{ summary.leader.symbol if summary.leader else '—' }}</span>
+    <span class="kpi-sub">
+      {% if summary.leader.market_cap %}${{ '{:.2f}'.format(summary.leader.market_cap / 1e12) }}T{% endif %}
+    </span>
+  </div>
+  <div class="kpi">
+    <span class="kpi-label">Top {{ top_n }} combined</span>
+    <span class="kpi-value">${{ '{:.1f}'.format(summary.total_cap / 1e12) }}T</span>
+    <span class="kpi-sub">market value</span>
+  </div>
+  <div class="kpi">
+    <span class="kpi-label">Best this year</span>
+    <span class="kpi-value pos">{{ summary.best.symbol }}</span>
+    <span class="kpi-sub pos">{{ '{:+.1f}'.format(summary.best.ytd_pct) }}%</span>
+  </div>
+  <div class="kpi">
+    <span class="kpi-label">Worst this year</span>
+    <span class="kpi-value neg">{{ summary.worst.symbol }}</span>
+    <span class="kpi-sub neg">{{ '{:+.1f}'.format(summary.worst.ytd_pct) }}%</span>
+  </div>
+  <div class="kpi">
+    <span class="kpi-label">Window</span>
+    <span class="kpi-value">{{ coverage.window_start.year }}</span>
+    <span class="kpi-sub">year to date</span>
+  </div>
+</div>
+
+<p id="refresh-status" class="refresh-status" hidden></p>
+
+<div class="filters" role="group" aria-label="Ranking metric">
+  {% for key, label in rank_modes.items() %}
+    <a class="chip {% if key == mode %}chip-on{% endif %}"
+       href="{{ url_for('index', mode=key) }}"
+       {% if key == mode %}aria-current="true"{% endif %}>{{ label }}</a>
+  {% endfor %}
+</div>
+
+<!-- ── Bar chart: magnitude ranking ────────────────────────────────── -->
+<section class="card">
+  <div class="card-head">
+    <div>
+      <h2>Top {{ top_n }} by {{ rank_modes[mode]|lower }}</h2>
+      <p class="muted small">
+        {% if mode == 'ytd' %}
+          Change from the first close of {{ coverage.window_start.year }}.
+          Bars above zero are gains, below zero are losses.
+        {% elif mode == 'market_cap' %}
+          Total value of all shares outstanding, in US dollars.
+        {% elif mode == 'price' %}
+          Most recent adjusted closing price per share.
+        {% else %}
+          Mean shares traded per day across the period.
+        {% endif %}
+      </p>
+    </div>
+  </div>
+  <div class="chart-box chart-box-tall">
+    <canvas id="rank-chart"
+            aria-label="Bar chart of the top {{ top_n }} companies by {{ rank_modes[mode]|lower }}"
+            role="img"></canvas>
+  </div>
+</section>
+
+<!-- ── Multi-line: indexed performance of the leading five ─────────── -->
+<section class="card">
+  <div class="card-head">
+    <div>
+      <h2>Performance since 1 January</h2>
+      <p class="muted small">
+        Top five rebased to 100 on the first trading day, so companies with very
+        different share prices stay comparable on one axis.
+      </p>
+    </div>
+  </div>
+  <div class="chart-box">
+    <canvas id="trend-chart"
+            aria-label="Line chart comparing indexed performance of the leading five companies"
+            role="img"></canvas>
+  </div>
+  <div id="trend-legend" class="legend"></div>
+</section>
+
+<!-- ── Table: satisfies the contrast-relief rule, and is the
+        accessible equivalent of both charts above ─────────────────── -->
+<section class="card">
+  <div class="card-head"><h2>All figures</h2></div>
+  <div class="table-scroll">
+    <table class="data-table">
+      <caption class="sr-only">
+        Top {{ top_n }} companies ranked by {{ rank_modes[mode]|lower }}
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col" class="num">#</th>
+          <th scope="col">Company</th>
+          <th scope="col">Year</th>
+          <th scope="col" class="num">Last</th>
+          <th scope="col" class="num">YTD</th>
+          <th scope="col" class="num">Mkt cap</th>
+          <th scope="col" class="num">Low &ndash; high</th>
+          <th scope="col" class="num">Avg vol</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for c in top %}
+        <tr>
+          <td class="num muted">{{ c.rank }}</td>
+          <td>
+            <a class="sym-link" href="{{ url_for('company', symbol=c.symbol) }}">
+              <span class="swatch" aria-hidden="true"></span>
+              <strong>{{ c.symbol }}</strong>
+              <span class="muted">{{ c.name }}</span>
+            </a>
+          </td>
+          <td>
+            {# Inline SVG sparkline: the year's shape, at a glance. Points are
+               normalised to the row's own min/max, so each line uses the full
+               height and the shape - not the price level - is what reads. #}
+            {% if c.spark and c.spark|length > 1 %}
+              {% set lo = c.spark|min %}{% set hi = c.spark|max %}
+              {% set span = (hi - lo) if (hi - lo) > 0 else 1 %}
+              <svg class="spark {{ 'spark-up' if c.ytd_pct >= 0 else 'spark-down' }}"
+                   viewBox="0 0 100 22" preserveAspectRatio="none"
+                   aria-hidden="true" focusable="false">
+                <polyline points="
+                  {%- for v in c.spark -%}
+                    {{ (loop.index0 / (c.spark|length - 1) * 100)|round(2) }},{{ (20 - (v - lo) / span * 18)|round(2) }}
+                  {% endfor -%}"/>
+              </svg>
+            {% endif %}
+          </td>
+          <td class="num">{{ '{:,.2f}'.format(c.last_close) }}</td>
+          <td class="num">
+            <span class="delta {{ 'pos' if c.ytd_pct >= 0 else 'neg' }}">
+              {{ '▲' if c.ytd_pct >= 0 else '▼' }}{{ '{:.2f}'.format(c.ytd_pct|abs) }}%
+            </span>
+          </td>
+          <td class="num">
+            {% if c.market_cap %}{{ '{:.2f}'.format(c.market_cap / 1e12) }}T
+            {% else %}<span class="muted">&mdash;</span>{% endif %}
+          </td>
+          <td class="num muted">
+            {{ '{:,.0f}'.format(c.period_low) }}&ndash;{{ '{:,.0f}'.format(c.period_high) }}
+          </td>
+          <td class="num muted">{{ '{:,.1f}'.format(c.avg_volume / 1e6) }}M</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script id="rank-data" type="application/json">{{ top|tojson }}</script>
+<script id="trend-data" type="application/json">{{ compare|tojson }}</script>
+<script>window.RANK_MODE = {{ mode|tojson }};</script>
+{% endblock %}

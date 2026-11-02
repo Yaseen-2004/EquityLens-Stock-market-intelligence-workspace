@@ -1,0 +1,210 @@
+{% extends "base.html" %}
+{% block title %}{{ series.symbol }} &middot; Market Terminal{% endblock %}
+{% block heading %}{{ series.symbol }}
+  <span style="font-weight:400;color:var(--text-secondary)">{{ series.name }}</span>
+{% endblock %}
+
+{% block context %}
+  {% if metrics %}
+    {{ (metrics.exchange or 'EQUITY')|upper }} &middot;
+    {{ metrics.first_date.strftime('%d %b') }} &rarr;
+    {{ metrics.last_date.strftime('%d %b %Y') }} &middot;
+    {{ metrics.bar_count }} days YTD
+  {% endif %}
+{% endblock %}
+
+{% block content %}
+
+{% if metrics %}
+<!-- Headline numbers belong in stat tiles, not a chart -->
+<div class="kpi-row">
+  <div class="kpi">
+    <span class="kpi-label">Last close</span>
+    <span class="kpi-value">${{ '{:,.2f}'.format(metrics.last_close) }}</span>
+    <span class="kpi-sub">{{ metrics.last_date.strftime('%d %b %Y') }}</span>
+  </div>
+  <div class="kpi">
+    <span class="kpi-label">Change YTD</span>
+    <span class="kpi-value {{ 'pos' if metrics.ytd_pct >= 0 else 'neg' }}">
+      {{ '{:+.2f}'.format(metrics.ytd_pct) }}%
+    </span>
+    <span class="kpi-sub">{{ '{:+,.2f}'.format(metrics.change_abs) }} USD</span>
+  </div>
+  <div class="kpi">
+    <span class="kpi-label">Range this year</span>
+    <span class="kpi-value">${{ '{:,.0f}'.format(metrics.period_low) }}&ndash;${{ '{:,.0f}'.format(metrics.period_high) }}</span>
+  </div>
+  <div class="kpi">
+    <span class="kpi-label">Market cap</span>
+    <span class="kpi-value">
+      {% if metrics.market_cap %}${{ '{:.2f}'.format(metrics.market_cap / 1e12) }}T
+      {% else %}&mdash;{% endif %}
+    </span>
+    <span class="kpi-sub">
+      {% if metrics.avg_volume %}{{ '{:,.1f}'.format(metrics.avg_volume / 1e6) }}M shares/day{% endif %}
+    </span>
+  </div>
+</div>
+{% endif %}
+
+<!-- ── Price ─────────────────────────────────────────────────────── -->
+<section class="card">
+  <div class="card-head">
+    <div>
+      <h2>Closing price</h2>
+      <p class="muted small">Adjusted for splits and dividends.</p>
+    </div>
+  </div>
+  <div class="filters" role="group" aria-label="Chart time range">
+    {% for key, label in ranges.items() %}
+      <a class="chip {% if key == rng %}chip-on{% endif %}"
+         href="{{ url_for('company', symbol=series.symbol, range=key) }}"
+         {% if key == rng %}aria-current="true"{% endif %}>{{ label }}</a>
+    {% endfor %}
+  </div>
+  <div class="chart-box chart-box-tall">
+    <canvas id="price-chart" role="img"
+            aria-label="Line chart of {{ series.symbol }} closing price"></canvas>
+  </div>
+</section>
+
+{% if risk %}
+<!-- ── Risk over the long window ─────────────────────────────────── -->
+<section class="card">
+  <div class="card-head">
+    <div>
+      <h2>Risk and return over {{ risk.years }} years</h2>
+      <p class="muted small">
+        {{ risk.window_start }} to {{ risk.window_end }}.
+        {% if risk.benchmark %}
+          Compared against {{ risk.benchmark.symbol }}, the market benchmark.
+        {% endif %}
+      </p>
+    </div>
+  </div>
+
+  <div class="kpi-row">
+    <div class="kpi">
+      <span class="kpi-label">Return a year</span>
+      <span class="kpi-value {{ 'pos' if risk.cagr_pct >= 0 else 'neg' }}">
+        {{ '{:+.1f}'.format(risk.cagr_pct) }}%
+      </span>
+      {% if risk.benchmark %}
+        <span class="kpi-sub">{{ risk.benchmark.symbol }}
+          {{ '{:+.1f}'.format(risk.benchmark.cagr_pct) }}%</span>
+      {% endif %}
+    </div>
+    <div class="kpi">
+      <span class="kpi-label">Volatility</span>
+      <span class="kpi-value">{{ '{:.1f}'.format(risk.volatility_pct) }}%</span>
+      {% if risk.benchmark %}
+        <span class="kpi-sub">{{ risk.benchmark.symbol }}
+          {{ '{:.1f}'.format(risk.benchmark.volatility_pct) }}%</span>
+      {% endif %}
+    </div>
+    <div class="kpi">
+      <span class="kpi-label">Sharpe</span>
+      <span class="kpi-value">{{ '{:.2f}'.format(risk.sharpe) }}</span>
+      <span class="kpi-sub">return per unit of risk</span>
+    </div>
+    <div class="kpi">
+      <span class="kpi-label">Beta</span>
+      <span class="kpi-value">
+        {% if risk.beta is defined %}{{ '{:.2f}'.format(risk.beta) }}{% else %}&mdash;{% endif %}
+      </span>
+      <span class="kpi-sub">
+        {% if risk.beta is defined %}
+          {% if risk.beta > 1.15 %}swings harder than the market
+          {% elif risk.beta < 0.85 %}steadier than the market
+          {% else %}moves with the market{% endif %}
+        {% endif %}
+      </span>
+    </div>
+  </div>
+
+  <div class="card-head" style="margin-top:6px">
+    <div>
+      <h2>Drawdown</h2>
+      <p class="muted small">
+        How far below its own running high the price sat each day. The worst
+        was <strong>{{ '{:.1f}'.format(risk.max_drawdown_pct) }}%</strong>,
+        from {{ risk.peak_date }} to {{ risk.trough_date }}
+        {% if risk.recovered_on %}
+          &mdash; recovered {{ risk.recovered_on }}.
+        {% else %}
+          &mdash; not yet recovered.
+        {% endif %}
+      </p>
+    </div>
+  </div>
+  <div class="chart-box">
+    <canvas id="dd-chart" role="img"
+            aria-label="Area chart of drawdown from the running high"></canvas>
+  </div>
+</section>
+{% endif %}
+
+{% if projection %}
+<!-- ── Forecast, with the caveat attached ────────────────────────── -->
+<section class="card">
+  <div class="card-head">
+    <div>
+      <h2>Next {{ projection.horizon }} trading days</h2>
+      <p class="muted small">
+        From the {{ projection.model }} model, fitted on history up to
+        {{ projection.as_of }}.
+      </p>
+    </div>
+  </div>
+
+  <div class="kpi-row">
+    <div class="kpi">
+      <span class="kpi-label">Point estimate</span>
+      <span class="kpi-value">${{ '{:,.2f}'.format(projection.point) }}</span>
+      <span class="kpi-sub {{ 'pos' if projection.change_pct >= 0 else 'neg' }}">
+        {{ '{:+.2f}'.format(projection.change_pct) }}% from
+        ${{ '{:,.2f}'.format(projection.last_close) }}
+      </span>
+    </div>
+    <div class="kpi">
+      <span class="kpi-label">80% range</span>
+      <span class="kpi-value">${{ '{:,.0f}'.format(projection.lo80) }}&ndash;${{ '{:,.0f}'.format(projection.hi80) }}</span>
+      <span class="kpi-sub">{{ '{:.1f}'.format(projection.band_width_pct) }}% wide</span>
+    </div>
+    <div class="kpi">
+      <span class="kpi-label">95% range</span>
+      <span class="kpi-value">${{ '{:,.0f}'.format(projection.lo95) }}&ndash;${{ '{:,.0f}'.format(projection.hi95) }}</span>
+    </div>
+    <div class="kpi">
+      <span class="kpi-label">Model skill</span>
+      {% set skill = projection.scores[projection.model].skill_vs_naive %}
+      <span class="kpi-value {{ 'pos' if skill > 0 else 'neg' }}">
+        {{ '{:+.3f}'.format(skill) }}
+      </span>
+      <span class="kpi-sub">vs a random walk</span>
+    </div>
+  </div>
+
+  <p class="caveat">
+    {% if skill > 0 %}
+      This model edged past &ldquo;assume no change&rdquo; for {{ series.symbol }}
+      in backtesting, but by a margin well inside the noise of a single test
+      period.
+    {% else %}
+      <strong>This model did worse than assuming no change</strong> for
+      {{ series.symbol }} in backtesting. Read the point estimate as an
+      illustration, not a prediction &mdash; the width of the range is the only
+      honest part of it.
+    {% endif %}
+    <a href="{{ url_for('forecast_page') }}">See how it was measured</a>.
+  </p>
+</section>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script id="series-data" type="application/json">{{ series|tojson }}</script>
+{% if risk %}
+<script id="drawdown-data" type="application/json">{{ risk.drawdown_series|tojson }}</script>
+{% endif %}
+{% endblock %}

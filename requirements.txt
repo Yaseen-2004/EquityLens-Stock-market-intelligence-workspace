@@ -1,0 +1,23 @@
+# Runtime dependencies for the web app.
+#
+# Kept deliberately small so it installs inside a serverless bundle. The two
+# heavier optional pieces are separate:
+#   requirements-ai.txt   - the Claude engine
+#   requirements-rag.txt  - local embeddings for semantic search
+# Both are optional: without them the app still serves every page and the
+# offline chatbot still answers.
+
+Flask>=3.0
+SQLAlchemy>=2.0
+
+requests>=2.31
+truststore>=0.9        # use the OS certificate store (fixes SSL errors on Windows)
+
+pandas>=2.0
+numpy>=1.24
+scikit-learn>=1.3      # forecasting models
+
+google-genai>=2.0      # Gemini chat engine (free tier); optional at runtime
+
+# Interactive dashboard
+streamlit>=1.35

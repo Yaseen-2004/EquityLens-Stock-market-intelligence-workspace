@@ -1,0 +1,3 @@
+# Optional: the Anthropic Claude chat engine.
+# The app selects Gemini, then Claude, then its offline engine.
+anthropic>=1.0

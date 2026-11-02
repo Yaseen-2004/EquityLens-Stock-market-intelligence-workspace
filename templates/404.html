@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block title %}Not found &middot; Market Terminal{% endblock %}
+{% block heading %}Not found{% endblock %}
+{% block content %}
+<section class="card empty">
+  <h2>Nothing here</h2>
+  <p class="muted">{{ message }}</p>
+  <p><a class="btn" href="{{ url_for('index') }}">Back to overview</a></p>
+</section>
+{% endblock %}
